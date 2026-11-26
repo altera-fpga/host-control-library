@@ -1,0 +1,14 @@
+build*/
+.codesight/
+.vscode/
+.venv/
+*.user
+*.suo
+*.obj
+*.o
+*.a
+*.lib
+*.dll
+*.exe
+__pycache__/
+statick-output/

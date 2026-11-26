@@ -1,0 +1,104 @@
+# syntax=docker/dockerfile:1
+
+FROM nvidia/cuda:12.6.3-devel-ubuntu24.04 AS hololink-sdk
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV CUDAToolkit_ROOT=/usr/local/cuda
+ENV CUDA_STUB_DIR=/usr/local/cuda/targets/x86_64-linux/lib/stubs
+ENV LIBRARY_PATH=/usr/local/cuda/targets/x86_64-linux/lib/stubs:${LIBRARY_PATH}
+ENV LD_LIBRARY_PATH=/usr/local/cuda/targets/x86_64-linux/lib/stubs:${LD_LIBRARY_PATH}
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        cmake \
+        git \
+        libfmt-dev \
+        ninja-build \
+        pybind11-dev \
+        python3 \
+        python3-dev \
+    && ln -sf ${CUDA_STUB_DIR}/libcuda.so ${CUDA_STUB_DIR}/libcuda.so.1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build only the native Hololink SDK needed by the optional HCL Hololink transport.
+RUN git clone --depth 1 --branch 2.7.0 https://github.com/nvidia-holoscan/holoscan-sensor-bridge.git /opt/hololink-src \
+    && cmake -S /opt/hololink-src -B /opt/hololink-build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/hololink \
+        -DHOLOLINK_BUILD_PYTHON=OFF \
+        -DHOLOLINK_BUILD_ONLY_NATIVE=ON \
+        -DHOLOLINK_BUILD_TESTS=OFF \
+        -DHOLOLINK_BUILD_TOOLS=OFF \
+        -DHOLOLINK_BUILD_EXAMPLES=OFF \
+        -DHOLOLINK_BUILD_EMULATOR=ON \
+        -DHOLOLINK_BUILD_ROCE=OFF \
+        -DHOLOLINK_BUILD_CPACK=OFF \
+        -DHOLOLINK_BUILD_EXPORT=ON \
+    && cmake --build /opt/hololink-build --parallel \
+    && cmake --install /opt/hololink-build \
+    && rm -rf /opt/hololink-build /opt/hololink-src
+
+FROM nvidia/cuda:12.6.3-devel-ubuntu24.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV CUDAToolkit_ROOT=/usr/local/cuda
+ENV CUDA_STUB_DIR=/usr/local/cuda/targets/x86_64-linux/lib/stubs
+ENV CMAKE_PREFIX_PATH=/opt/hololink
+ENV Hololink_DIR=/opt/hololink/lib/cmake/hololink
+ENV LIBRARY_PATH=/usr/local/cuda/targets/x86_64-linux/lib/stubs:${LIBRARY_PATH}
+ENV LD_LIBRARY_PATH=/usr/local/cuda/targets/x86_64-linux/lib/stubs:${LD_LIBRARY_PATH}
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        cmake \
+        libfmt-dev \
+        ninja-build \
+        pybind11-dev \
+        python3 \
+        python3-dev \
+    && ln -sf ${CUDA_STUB_DIR}/libcuda.so ${CUDA_STUB_DIR}/libcuda.so.1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=hololink-sdk /opt/hololink /opt/hololink
+
+WORKDIR /src
+COPY . .
+
+RUN cmake -S . -B /tmp/build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=ON \
+        -DHCL_BUILD_EXAMPLES=ON \
+        -DHCL_BUILD_TESTS=OFF \
+        -DHCL_BUILD_PYTHON=OFF \
+        -DHCL_BUILD_HOLOLINK=ON \
+    && cmake --build /tmp/build --parallel \
+    && cmake --install /tmp/build --prefix /opt/altera/hcl
+
+FROM nvidia/cuda:12.6.3-runtime-ubuntu24.04 AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV CUDA_STUB_DIR=/usr/local/cuda/targets/x86_64-linux/lib/stubs
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libfmt9 \
+        libstdc++6 \
+        python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=hololink-sdk /usr/local/cuda/targets/x86_64-linux/lib/stubs /usr/local/cuda/targets/x86_64-linux/lib/stubs
+COPY --from=hololink-sdk /opt/hololink /opt/hololink
+COPY --from=builder /opt/altera/hcl /opt/altera/hcl
+
+RUN ln -sf ${CUDA_STUB_DIR}/libcuda.so ${CUDA_STUB_DIR}/libcuda.so.1
+
+ENV PATH=/opt/altera/hcl/bin:${PATH}
+ENV LD_LIBRARY_PATH=/usr/local/cuda/targets/x86_64-linux/lib/stubs:/opt/hololink/lib:/opt/altera/hcl/lib:${LD_LIBRARY_PATH}
+ENV CMAKE_PREFIX_PATH=/opt/hololink
+ENV Hololink_DIR=/opt/hololink/lib/cmake/hololink
+
+WORKDIR /opt/altera/hcl
+
+CMD ["/bin/bash"]

@@ -1,0 +1,11 @@
+global:
+  exceptions:
+    file:
+      - tools: all
+        globs:
+          - "*/build/*"
+          - "*/.venv/*"
+          - "*/__pycache__/*"
+          - "*/tests/*"
+          - "*/examples/*"
+

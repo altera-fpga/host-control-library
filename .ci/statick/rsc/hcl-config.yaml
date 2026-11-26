@@ -1,0 +1,18 @@
+levels:
+  hcl:
+    inherits_from:
+      - "default"
+    tool:
+      cppcheck:
+        flags: >
+          -j 4
+          --enable=warning,style,performance,portability
+          --suppress=missingIncludeSystem
+          --suppress=cstyleCast:*.c
+          --suppress=unusedStructMember:*/include/hcl/*.h
+          --template='[{file}:{line}]: ({severity} {id}) {message}'
+      flawfinder:
+        flags: "--falsepositive"
+    reporting:
+      json:
+        files: "true"
